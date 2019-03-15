@@ -1,4 +1,4 @@
-# simple makefile
+## simple makefile
 
 MKDIR_P = mkdir -p
 
