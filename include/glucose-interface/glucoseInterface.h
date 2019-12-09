@@ -17,6 +17,7 @@ namespace Glucose {
     public:
       SimpSolver* solver;
       ////////////////////////
+	  void initSolver();
       GInterface();
       //~GInterface();
       GInterface(const GInterface &obj);
@@ -43,7 +44,6 @@ namespace Glucose {
     private:
       const char* dimacsFile;
       /////////////////////
-      void initSolver();
       void readClause2(StreamBuffer& in, vec<Lit>& lits, int offset);
 
 

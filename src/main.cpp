@@ -44,14 +44,14 @@ int GlobalElapsedTime() {
 int main(int argc, char*argv[])
 {
 	g_start_time = clock();
-	if (argc < 4) {
+	if (argc < 3) {
 		cout << "usage: resyn inputfile outputfile  num (-n targets)" << endl;
 		return 0;
 	}
 
 	string spec_filename(argv[1]);
-	string impl_filename(argv[2]);
-	string output_filename(argv[3]);
+	string impl_filename(argv[1]);
+	string output_filename(argv[2]);
 	//int num(atoi(argv[4]));
 	int time_limit;
 	int iteration_limit;
@@ -101,7 +101,8 @@ int main(int argc, char*argv[])
 	fclose(spec_file);
 	//fclose(impl_file);
 
-	cout << impl_circuit.outputs.size()<< endl;
+	cout << "PO: " << impl_circuit.outputs.size()<< endl;
+	cout << "PI: " << impl_circuit.inputs.size() << endl;
 	impl_circuit.WriteBlif("test.blif");
 	//return 0;
 
@@ -123,8 +124,8 @@ int main(int argc, char*argv[])
 
 	//try to traverse all the combinations of internal nodes
 	//NodeRestructurer impl_reselector(&impl_circuit, &spec_circuit);
-	//impl_circuit.AssignOrder();
-	//impl_circuit.SortByOrder();
+	impl_circuit.AssignOrder();
+	impl_circuit.SortByOrder();
 	//impl_circuit.GetCluster(2, 5, false);
 
 	//if(targetNamesToChange.empty())
@@ -137,17 +138,88 @@ int main(int argc, char*argv[])
 	//	//impl_iterator.RunOnce(targets_to_change);
 	//	impl_reselector.Traverse(num, targets_to_change);
 	//}
+	cout << "cnm" << endl;
+	impl_circuit.InitCluster();
+	cout << "cnm" << endl;
+	int num_clst_ori=impl_circuit.all_clusters.size();
+	int num_node_ori=impl_circuit.all_nodes.size();
 
 	NodeMerge impl_merge(&impl_circuit, &spec_circuit);
-	impl_merge.Run();
+	cout<<"==============select one============= " << endl;
+	impl_merge.SelectMerge(1);
+	int one_cnt1 = impl_merge.one_cnt;
+	cout << "==============fanin merge===========" << endl;
+	impl_merge.FaninMerge();
+	int fanin_cnt1 = impl_merge.fanin_cnt;
+	cout<<"==============select two============= " << endl;
+	impl_merge.SelectMerge(2);
+	int one_cnt2 = impl_merge.one_cnt;
+	int two_cnt2 = impl_merge.two_cnt;
+	cout<<"==============fanin merge============= " << endl;
+	impl_merge.FaninMerge();
+	int fanin_cnt2 = impl_merge.fanin_cnt;
+	cout << "==============quick merge============= " << endl;
+	impl_merge.QuickMerge();
+	cout << "====================================== " << endl;
 
-	cout << "total num of nodes: " << impl_merge.total_num << endl;
-	cout << "merged with one node: " << impl_merge.one_num << endl;
-	cout << "merged with two nodes: " << impl_merge.two_num << endl;
-	cout << "merged with three nodes: " << impl_merge.three_num << endl;
-	cout << "Elapsed time: "<< GlobalElapsedTime() <<endl;
-	
-	//remove dummy buffers
+	cout << "num of nodes before: " << num_node_ori << endl;
+	cout << "num of nodes now: " << impl_circuit.all_nodes.size() << endl;
+	cout << "num of clusters before: " << num_clst_ori << endl;
+	cout << "num of clusters now: " << impl_circuit.all_clusters.size()<< endl;
+	int cnt1;
+	int cnt2;
+	for (Node* node : impl_circuit.all_nodes) {
+		if (node->is_input || node->is_output)
+			continue;
+		else if (!node->HasOutput()) {
+			cnt1++;
+			if (node->my_cluster->nodes_c.size() != 1)
+				cnt2++;
+		}
+	}
+	cout << cnt1 << " nodes have no output" << endl;
+	cout << cnt2 << " of them is merged with other nodes" << endl;
+	cout << "merged with one cluster(first time): " << one_cnt1 << endl;
+	cout << "fanin merging 1: " << fanin_cnt1 << endl;
+	cout << "merged with one cluster(second time): " << one_cnt2 << endl;
+	cout << "merged with two clusters(second time): " << two_cnt2 << endl;
+	//cout << "merged with three clusters: " << impl_merge.three_cnt << endl;
+	cout << "fanin merging 2: " << fanin_cnt2 << endl;
+	cout << "quick merging: " << impl_merge.quick_cnt << endl;
+	for (Cluster* clst : impl_circuit.all_clusters) {
+		cout << clst->nodes_c.size() << "[" << clst->input_nodes.size() << "]";
+	}
+	cout << endl;
+	int io_cnt[10][100];
+	for(int i = 0; i < 10; i++) {
+		for (int j = 0; j < 100; j++)
+			io_cnt[i][j] = 0;
+	}
+	for (Cluster* clst : impl_circuit.all_clusters) {
+		int in = clst->input_nodes.size();
+		int out = 0;
+		for (Node* nd : clst->nodes_c) {
+			if (nd->is_output)
+				out++;
+			for (Node* output : nd->outputs) {
+				if (find(clst->nodes_c.begin(), clst->nodes_c.end(), output) == clst->nodes_c.end()) {
+					out++;
+					break;
+				}
+			}
+		}
+		io_cnt[in][out]++;
+	}
+	for (int i = 0; i < 10; i++) {
+		for (int j = 0; j < 100; j++) {
+			if(io_cnt[i][j]!=0)
+				cout << i << "-input-" << j << "-output: " << io_cnt[i][j] << endl;
+		}
+	}
+	cout << "Elapsed time: " << GlobalElapsedTime() << endl;
+
+
+//remove dummy buffers
 /*	for (Node* pi_node : impl_circuit.inputs) {
 		string dummy_name = pi_node->name + "dummy";
 		Node* dummy = impl_circuit.all_nodes_map[dummy_name];
@@ -160,7 +232,8 @@ int main(int argc, char*argv[])
 		impl_circuit.all_nodes.erase(find(impl_circuit.all_nodes.begin(), impl_circuit.all_nodes.end(), dummy));
 		delete dummy;
 	}*/
-
+	string output_filename_m = "m_" + output_filename;
+	impl_circuit.WriteBlif_m(output_filename_m);
 	impl_circuit.WriteBlif(output_filename);
 	return 0;
 }

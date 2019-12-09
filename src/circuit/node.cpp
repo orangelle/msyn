@@ -177,6 +177,48 @@ namespace nodecircuit {
 	//	return 0;
 	//}
 
+	int Circuit::WriteBlif_m(string filename) {
+		ofstream out_file_stream(filename);
+		if (!out_file_stream.is_open())
+			return 0;
+
+		int i, j, k;
+
+		out_file_stream << ".model " << name << endl;
+		out_file_stream << ".inputs ";
+		for (i = 0; i < inputs.size(); i++)
+			out_file_stream << " \\" << endl << " " << inputs[i]->name;
+		out_file_stream << endl;
+		out_file_stream << ".outputs ";
+		for (i = 0; i < outputs.size(); i++)
+			out_file_stream << " \\" << endl << " " << outputs[i]->name;
+		out_file_stream << endl;
+		// write the name of zero and one nodes, if they exist
+		if (all_nodes_map.find("zero") != all_nodes_map.end())
+			out_file_stream << ".names zero" << endl << "0" << endl;
+		if (all_nodes_map.find("one") != all_nodes_map.end())
+			out_file_stream << ".names one" << endl << "1" << endl;
+		for (Cluster* clst : all_clusters) {
+			out_file_stream << "======================================================" << endl;
+			for (j = 0; j < clst->nodes_c.size(); j++) {
+				Node*node = clst->nodes_c[j];
+				if (node->is_input)
+					continue;
+				if (node->name == "one" || node->name == "zero")
+					continue;
+				out_file_stream << ".names";
+				for (k = 0; k < node->inputs.size(); k++)
+					out_file_stream << " " << node->inputs[k]->name;
+				out_file_stream << " " << node->name << endl;
+				out_file_stream << node->cube << endl;
+			}
+		}
+		out_file_stream << ".end" << endl;
+		out_file_stream << endl;
+		out_file_stream.close();
+		return 0;
+	}
+
 	int Circuit::WriteBlif(string filename) {
 		ofstream out_file_stream(filename);
 		if (!out_file_stream.is_open())
@@ -286,6 +328,37 @@ namespace nodecircuit {
 	int Circuit::SortByFanout() {
 		sort(all_nodes.begin(), all_nodes.end(), CompareByFanout);
 	}
+	
+	int Circuit::GetFaninCone(Cluster* clst, ClusterSet& fanin_clsts) {
+		ClusterVector not_processed;
+		not_processed.push_back(clst);
+		while (not_processed.size() > 0) {
+			Cluster* current_clst = not_processed.back();
+			not_processed.pop_back();
+			fanin_clsts.insert(current_clst);
+			for (Node* nd : current_clst->nodes_c)
+				for (Node* in : nd->inputs)
+					if (!in->is_input)
+						if (fanin_clsts.find(in->my_cluster) == fanin_clsts.end())
+							not_processed.push_back(in->my_cluster);
+		}
+		fanin_clsts.erase(clst);
+	}
+
+	int Circuit::GetFanoutCone(Cluster* clst, ClusterSet& fanout_clsts) {
+		ClusterVector not_processed;
+		not_processed.push_back(clst);
+		while (not_processed.size() > 0) {
+			Cluster* current_clst = not_processed.back();
+			not_processed.pop_back();
+			fanout_clsts.insert(current_clst);
+			for (Node* nd : current_clst->nodes_c)
+				for (Node* out : nd->outputs)
+					if (fanout_clsts.find(out->my_cluster) == fanout_clsts.end())
+						not_processed.push_back(out->my_cluster);
+		}
+		fanout_clsts.erase(clst);
+	}
 
 	int Circuit::GetFaninCone(Node* node, NodeSet& fanin_nodes, NodeSet& fanin_pi) {
 		NodeVector not_processed;
@@ -319,12 +392,12 @@ namespace nodecircuit {
 			if (current_node->is_output) {
 				fanout_po.insert(current_node);
 			}
-			else { // -> see the Note below
+			//else { // -> see the Note below
 			fanout_nodes.insert(current_node);
 			for (int i = 0; i < current_node->outputs.size(); i++)
 				if (fanout_nodes.find(current_node->outputs[i]) == fanout_nodes.end())
 					not_processed.push_back(current_node->outputs[i]);
-			}
+			//}
 		}
 		fanout_nodes.erase(node);
 
@@ -356,8 +429,8 @@ namespace nodecircuit {
 	int Circuit::SetTargets(std::vector<std::string> node_names) {
 		for (auto node_name : node_names) {
 			Node* node = this->GetNode(node_name);
-			if (node->is_input || node->is_output) {
-				std::cout << " PI/PO cannot be targets" << std::endl;
+			if (node->is_input) {
+				std::cout << " PI cannot be targets" << std::endl;
 				return 0;
 			}
 			for (auto input : node->inputs) {
@@ -377,8 +450,8 @@ namespace nodecircuit {
 	int Circuit::SetTargets(NodeVector nodes) {
 		for (auto node : nodes) {
 			std::cout << "setting " << node->name << " to target" << std::endl;
-			if (node->is_input || node->is_output) {
-				std::cout << " PI/PO cannot be targets" << std::endl;
+			if (node->is_input) {
+				std::cout << " PI cannot be targets" << std::endl;
 				return 0;
 			}
 			for (auto input : node->inputs) {
@@ -391,86 +464,92 @@ namespace nodecircuit {
 			node->inputs.clear();
 			node->cube_pre = node->cube;
 			node->cube.clear();
+			//if (!node->my_cluster->input_nodes.empty()) {
+			//	node->my_cluster->input_nodes_pre = node->my_cluster->input_nodes;
+			//	node->my_cluster->input_nodes.clear();
+			//}
 		}
 		return 0;
 	}
 
 
-	int Circuit::SelectTargets(std::vector<std::string>& node_names, Node * node, int n)
-	{
-		NodeSet fanin_set;
-		NodeVector fanin_cand;
-		NodeVector not_processed;
-		NodeVector fanin_selected;
-		not_processed.push_back(node);
-		//get the fanin of node
-		while (!not_processed.empty()) {
-			Node* current_node = not_processed.back();
-			not_processed.pop_back();
-			if (!current_node->is_input && !current_node->is_output)
-				fanin_set.insert(current_node);
-			for (auto input : current_node->inputs)
-				if (fanin_set.find(input) == fanin_set.end())
-					not_processed.push_back(input);
-		}
-		fanin_set.erase(node);
-		std::cout << fanin_set.size() << std::endl;
-		if (fanin_set.size() == 0)
-			return 0;
-		for (auto node : fanin_set)
-			fanin_cand.push_back(node);
-		//std::srand((unsigned)time(NULL));
-		for (NodeVector::iterator it = fanin_cand.begin(); it != fanin_cand.end();) {
-			if ((*it)->inputs.size() == 1 && (*it)->inputs[0]->is_input) {
-				it == fanin_cand.erase(it);
-			}
-			else
-				it++;
-		}
+	//int Circuit::SelectTargets(std::vector<std::string>& node_names, Node * node, int n)
+	//{
+	//	NodeSet fanin_set;
+	//	NodeVector fanin_cand;
+	//	NodeVector not_processed;
+	//	NodeVector fanin_selected;
+	//	not_processed.push_back(node);
+	//	//get the fanin of node
+	//	while (!not_processed.empty()) {
+	//		Node* current_node = not_processed.back();
+	//		not_processed.pop_back();
+	//		if (!current_node->is_input && !current_node->is_output)
+	//			fanin_set.insert(current_node);
+	//		for (auto input : current_node->inputs)
+	//			if (fanin_set.find(input) == fanin_set.end())
+	//				not_processed.push_back(input);
+	//	}
+	//	fanin_set.erase(node);
+	//	std::cout << fanin_set.size() << std::endl;
+	//	if (fanin_set.size() == 0)
+	//		return 0;
+	//	for (auto node : fanin_set)
+	//		fanin_cand.push_back(node);
+	//	//std::srand((unsigned)time(NULL));
+	//	for (NodeVector::iterator it = fanin_cand.begin(); it != fanin_cand.end();) {
+	//		if ((*it)->inputs.size() == 1 && (*it)->inputs[0]->is_input) {
+	//			it == fanin_cand.erase(it);
+	//		}
+	//		else
+	//			it++;
+	//	}
 
-		while (fanin_selected.size() < n && fanin_cand.size() + fanin_selected.size() >= n) {
-			bool will_delete_fanin = false;
-			int num = std::rand() % fanin_cand.size();
-			for (NodeVector::iterator it = fanin_selected.begin(); it != fanin_selected.end();it++) {
-				Node* fanin_cand_cur = fanin_cand.at(num);
-				while (fanin_cand_cur->outputs.size() == 1 && fanin_cand_cur->outputs[0] != node) {
-					if (fanin_cand_cur->outputs[0] == *it) {
-						will_delete_fanin = true;
-						break;
-					}
-					else
-						fanin_cand_cur = fanin_cand_cur->outputs[0];
-				}
-				if (will_delete_fanin)
-					break;
-				Node* fanin_selected_cur = *it;
-				while (fanin_selected_cur->outputs.size() == 1 && fanin_selected_cur->outputs[0] != node) {
-					if (fanin_selected_cur->outputs[0] == fanin_cand.at(num)) {
-						it = fanin_selected.erase(it);
-						it--;
-						break;
-					}
-					else
-						fanin_selected_cur = fanin_selected_cur->outputs[0];
-				}
-			}
-			if (!will_delete_fanin) {
-				fanin_selected.push_back(fanin_cand.at(num));
-				
-			}
-		fanin_cand.erase(fanin_cand.begin() + num);
-		}
-		for (auto fanin : fanin_selected) {
-			node_names.push_back(fanin->name);
-		}
-		return 0;
-	}
+	//	while (fanin_selected.size() < n && fanin_cand.size() + fanin_selected.size() >= n) {
+	//		bool will_delete_fanin = false;
+	//		int num = std::rand() % fanin_cand.size();
+	//		for (NodeVector::iterator it = fanin_selected.begin(); it != fanin_selected.end();it++) {
+	//			Node* fanin_cand_cur = fanin_cand.at(num);
+	//			while (fanin_cand_cur->outputs.size() == 1 && fanin_cand_cur->outputs[0] != node) {
+	//				if (fanin_cand_cur->outputs[0] == *it) {
+	//					will_delete_fanin = true;
+	//					break;
+	//				}
+	//				else
+	//					fanin_cand_cur = fanin_cand_cur->outputs[0];
+	//			}
+	//			if (will_delete_fanin)
+	//				break;
+	//			Node* fanin_selected_cur = *it;
+	//			while (fanin_selected_cur->outputs.size() == 1 && fanin_selected_cur->outputs[0] != node) {
+	//				if (fanin_selected_cur->outputs[0] == fanin_cand.at(num)) {
+	//					it = fanin_selected.erase(it);
+	//					it--;
+	//					break;
+	//				}
+	//				else
+	//					fanin_selected_cur = fanin_selected_cur->outputs[0];
+	//			}
+	//		}
+	//		if (!will_delete_fanin) {
+	//			fanin_selected.push_back(fanin_cand.at(num));
+	//			
+	//		}
+	//	fanin_cand.erase(fanin_cand.begin() + num);
+	//	}
+	//	for (auto fanin : fanin_selected) {
+	//		node_names.push_back(fanin->name);
+	//	}
+	//	return 0;
+	//}
 
 	int Circuit::Restruct(Node * target, std::vector<std::map<Node*, bool>> in2cases)
 	{
 		targets.erase(std::find(targets.begin(), targets.end(), target));
 		target->cube.clear();
+		//cout << "writing names" << endl;
 		for (auto pair : in2cases[0]) {
+			//cout << pair.first->name << endl;
 			pair.first->outputs.push_back(target);
 			target->inputs.push_back(pair.first);
 		}
@@ -480,7 +559,25 @@ namespace nodecircuit {
 			}
 			target->cube += " 1\n";
 		}
-		return 0;
+		cout << "writing blif" << endl;
+		WriteBlif("dump_.blif");
+
+	}
+
+	int Circuit::Remove(Node* node) {
+		assert(node->outputs.empty());
+		cout << "removing " << node->name << endl;;
+		if (node->my_cluster->nodes_c.size() != 1)
+			node->my_cluster->nodes_c.erase(find(node->my_cluster->nodes_c.begin(), node->my_cluster->nodes_c.end(), node));
+		else
+			all_clusters.erase(find(all_clusters.begin(), all_clusters.end(), node->my_cluster));
+		all_nodes.erase(find(all_nodes.begin(), all_nodes.end(), node));
+		for (Node* in : node->inputs) {
+			cout << in->outputs.size() << endl;
+			in->outputs.erase(find(in->outputs.begin(), in->outputs.end(), node));
+			if (in->outputs.empty()&& !in->is_input && !in->is_output )
+				Remove(in);
+		}
 	}
 
 	int Circuit::Restruct(Node * target_impl) {
@@ -506,21 +603,25 @@ namespace nodecircuit {
 	}
 
 	int Circuit::Restore(NodeVector& targets) {
+		cout << "restore targets" << endl;
 		for (auto target : targets) {
 			if (!target->inputs.empty()) {
 				for (auto input : target->inputs) {
-					input->outputs.pop_back();
+					input->outputs.erase(find(input->outputs.begin(),input->outputs.end(),target));
 				}
 			}
-		}
-		for (auto target : targets) {
 			target->cube = target->cube_pre;
+			target->cube_pre.clear();
 			target->inputs.clear();
 			target->inputs = target->inputs_pre;
 			target->inputs_pre.clear();
 			for (auto input : target->inputs) {
 				input->outputs.push_back(target);
 			}
+			/*if (!target->my_cluster->input_nodes_pre.empty()) {
+				target->my_cluster->input_nodes = target->my_cluster->input_nodes_pre;
+				target->my_cluster->input_nodes_pre.clear();
+			}*/
 		}
 		this->targets.clear();
 		return 0;
@@ -543,14 +644,44 @@ namespace nodecircuit {
 		std::cout << cnt << " of " << nodes_new.size() << " selected inputs are in the fanout cone of original inputs." << std::endl;
 	}
 
-	int Circuit::MakeCluster(NodeVector nodes_to_cluster)
-	{
-		Cluster* new_cluster = new Cluster;
-		all_clusters.push_back(new_cluster);
-		for (Node* node : nodes_to_cluster) {
-			new_cluster->append(node);
+	int Circuit::InitCluster() {
+		for (Node* node : all_nodes) {
+			if (!node->is_input) {
+				Cluster* cluster = new Cluster;
+				cluster->append(node);
+				all_clusters.insert(cluster);
+			}
 		}
-		return 0;
+	}
+
+	ClusterUnset::iterator  Circuit::Merge(Cluster* clu1, Cluster* clu2) {
+		cout << "Merge " << clu2->name << " -> " << clu1->name << endl;
+		cout<< "Erase cluster "<< clu2->name << endl;
+		ClusterUnset::iterator it = all_clusters.erase(all_clusters.find(clu2));
+		cout << "test2" << endl;
+		for (Node* nd : clu2->nodes_c) 
+			clu1->append(nd);
+		for (Node* nd : clu1->nodes_c)
+			if (clu1->input_nodes.find(nd) != clu1->input_nodes.end())
+				clu1->input_nodes.erase(nd);
+		return it;
+		//delete clu2;
+		////modify input clusters
+		//for (Cluster* clu_in : clu2->input_clusters) {
+		//	clu_in->output_clusters.erase(find(clu_in->output_clusters.begin(), clu_in->output_clusters.end(), clu2));
+		//	if (find(clu_in->output_clusters.begin(), clu_in->output_clusters.end(), clu1) == clu_in->output_clusters.end()) {
+		//		clu_in->output_clusters.push_back(clu1);
+		//		clu1->input_clusters.push_back(clu_in);
+		//	}
+		//}
+		////modify output clusters
+		//for (Cluster* clu_out : clu2->output_clusters) {
+		//	clu_out->input_clusters.erase(find(clu_out->input_clusters.begin(), clu_out->input_clusters.end(), clu2));
+		//	if (find(clu_out->input_clusters.begin(), clu_out->input_clusters.end(), clu1)==clu_out->input_clusters.end()) {
+		//		clu_out->input_clusters.push_back(clu1);
+		//		clu1->output_clusters.push_back(clu_out);
+		//	}
+		//}
 	}
 
 	int Circuit::GetCluster(int max, int thred, bool by_input) {

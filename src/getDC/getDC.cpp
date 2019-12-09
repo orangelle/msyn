@@ -147,9 +147,9 @@ getDC::getDC(nodecircuit::NodeVector *arg_signals, nodecircuit::Node *arg_target
   check.addCNF(fcnf, 0);
   check.addCNF(gcnf, fcnf->numVars());
   for (auto pin : circuit->inputs)
-    check.setEqual(fcnf->GetIndex(pin), gcnf->GetIndex(pin) + fcnf->numVars());
+    check.setEqual(fcnf->GetIndex(pin), gcnf->GetIndex(pin->name) + fcnf->numVars());
   for (auto pout : circuit->outputs)
-    check.setEqual(fcnf->GetIndex(pout), gcnf->GetIndex(pout) + fcnf->numVars());
+    check.setEqual(fcnf->GetIndex(pout), gcnf->GetIndex(pout->name) + fcnf->numVars());
 }
 
 void getDC::removeCase(std::map< nodecircuit::Node*, bool > *data, FType type) {
@@ -215,7 +215,28 @@ void getDC::removeCases_fromFile(std::string fname, FType type) {
 
 void getDC::solve() {
   while (1) {
-    if (main.getAnswer(false) == false) {
+	  struct sigaction s_action;
+	  struct itimerval timer, oldtimer;
+	  timer.it_value.tv_sec = 10;
+	  timer.it_value.tv_usec = 0;
+	  timer.it_interval.tv_sec = 10;
+	  timer.it_interval.tv_usec = 0;
+	  memset(&s_action, 0, sizeof(s_action));
+	  s_action.sa_handler = Timeout;
+	  sigaction(SIGALRM, &s_action, NULL);
+	  sigset_t block;
+	  sigaddset(&block, SIGALRM);
+	  sigprocmask(SIG_UNBLOCK, &block, NULL);
+	  setitimer(ITIMER_REAL, &timer, &oldtimer);
+	  bool res = false;
+	  if (!sigsetjmp(env_sigalrm_dc, 0))
+		  res = main.getAnswer(false);
+	  else{
+		  std::cout << "TIME OUT" << std::endl;
+		  main.solver->interrupt();
+	  }
+	  setitimer(ITIMER_REAL, &oldtimer, NULL);
+    if (res == false) {
       //std::cout << "no more in1/in2 cases" << std::endl;
       break; // no more cases, all the other input is Don't Care
     }else{
@@ -228,8 +249,8 @@ void getDC::solve() {
       }
 
       if (check.solver->solve( check.genLit(control, true) ) == false) {
+        assert(0);
         break;
-        //assert((0);
       }else {
         std::map < nodecircuit::Node*, bool > tmp_case;
         for (auto sig : *signals) {

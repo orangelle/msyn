@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_set>
 #include <set>
 #include <map>
 
@@ -15,6 +16,7 @@ namespace nodecircuit {
 	typedef std::set<Node *> NodeSet;
 	typedef std::vector<Cluster*> ClusterVector;
 	typedef std::set<Cluster*> ClusterSet;
+	typedef std::unordered_set<Cluster*> ClusterUnset;
 
 	class Node {
 	public:
@@ -36,10 +38,13 @@ namespace nodecircuit {
 		NodeVector inputs;  // fanins  of the node
 		NodeVector inputs_pre;
 		NodeVector outputs; // fanouts of the node
+		Cluster* my_cluster;
 		int order;
 		int weight;
 		int weight_for_elim;  // used to eliminate candidates for inputs of target
-
+		bool HasOutput() {
+			return !outputs.empty();
+		}
 		//// get the non controlling node
 		//Node* GetNonControlNode(Node* zero_node, Node* one_node);
 		//// get the controlling node
@@ -55,15 +60,20 @@ namespace nodecircuit {
 			if (name.empty())
 				name = node->name;
 			nodes_c.push_back(node);
-			output_nodes.insert(node->outputs.begin(), node->outputs.end());
+			//output_nodes.insert(node->outputs.begin(), node->outputs.end());
 			input_nodes.insert(node->inputs.begin(), node->inputs.end());
+			node->my_cluster = this;
+			for (Node* nd : nodes_c) 
+				if (input_nodes.find(nd) != input_nodes.end())
+					input_nodes.erase(nd);
 		};
 		std::string name;
 		NodeVector nodes_c;
-		NodeSet output_nodes;
+		//NodeSet output_nodes;
+		NodeSet input_nodes_pre;
 		NodeSet input_nodes;
-		std::vector<Cluster*> output_clusters;
-		std::vector<Cluster*> input_clusters;
+		//std::vector<Cluster*> output_clusters;
+		//std::vector<Cluster*> input_clusters;
 	};
 
 	class Circuit {
@@ -76,6 +86,7 @@ namespace nodecircuit {
 
 		// write as a blif
 		int WriteBlif(std::string filename);
+		int WriteBlif_m(std::string filename);
 		// load the weights fromm the given file
 		int ReadWeights(std::string filename);
 
@@ -87,12 +98,18 @@ namespace nodecircuit {
 		int SortByOrder();
 		int SortByFanout();
 		int SortByFanin();
-		//Group a vector of nodes into new cluster
-		int MakeCluster(NodeVector nodes_to_cluster);
+		//Initially creat a cluster for every node except PIs
+		int InitCluster();
+		//merge clu2 to clu1
+		ClusterUnset::iterator Merge(Cluster* clu1, Cluster* clu2);
 		//Get the cluster automatically by trivial heuristic
 		int GetCluster(int max, int thred, bool by_input);
 		//Get the maximum fanout sharedness of a node for each node of the cluster
 		int Sharedness(Node* node, Cluster* cluster, bool by_input);
+		// get the fanin cone (and fanin primary inputs) of a cluster
+		int GetFaninCone(Cluster* clst, ClusterSet& fanin_clsts);
+		// get the fanout cone (and fanout primary outputs) of a node
+		int GetFanoutCone(Cluster* clst, ClusterSet& fanout_clsts);
 		// get the fanin cone (and fanin primary inputs) of a node
 		int GetFaninCone(Node* node, NodeSet& fanin_nodes, NodeSet& fanin_pi);
 		// get the fanout cone (and fanout primary outputs) of a node
@@ -117,17 +134,20 @@ namespace nodecircuit {
 		// restruct the circuit
 		int Restruct(Node* target, std::vector< std::map < Node*, bool>> in2cases);
 		int Restruct(Node* target_impl);
+		// remove the node
+		int Remove(Node* node);
 		// restore the circuit
 		int Restore(NodeVector& targets);
 		// judge whether nodes_new is in nodes_old's TFO
 		int IsInFanoutCone(NodeVector nodes_old, NodeVector nodes_new);
-	public:
+
 		std::string name;
 		NodeVector inputs;    // primary inputs
 		NodeVector outputs;   // primary outputs
 		NodeVector targets;   // targets of debug
 		NodeVector all_nodes; // all nodes including inputs/outputs/targets
-		ClusterVector all_clusters;
+		//ClusterVector all_clusters;
+		ClusterUnset all_clusters;
 		// mapping node names to nodes
 		std::map<std::string, Node *> all_nodes_map;
 		// find a node by name, returns NULL if not found
